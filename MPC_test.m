@@ -3,112 +3,75 @@ g  = 9.8; % gravity
 zc = 0.8; % Center of Mass Height
 Ts = 5e-3; % Sampling Time
 EndTime = 10;
-ts = linspace(0,EndTime,EndTime/Ts)
+sim_time = linspace(0,EndTime,EndTime/Ts)
 
 
 
-A = [0 1 0;...
+Ac = [0 1 0;...
      0 0 1;...
      0 0 0]
-B = [0;0;1];
-C= [1 0 -zc/g; 1 0 0; 0 1 0];
-D = [0;0;0];
-lip_x = ss(A,B,C,D);
-lip_y = ss(A,B,C,D);
+Bc = [0;0;1];
+Cc= [1 0 -zc/g];
+Dc = [0];
+
+lip_x = ss(Ac,Bc,Cc,Dc);
+lip_y = ss(Ac,Bc,Cc,Dc);
 lip_x_d = c2d(lip_x,Ts);
 lip_y_d = c2d(lip_y,Ts);
-lip_x_d=setmpcsignals(lip_x_d,"MeasuredOutputs",1,"UnmeasuredOutputs",[2 3]);
-lip_y_d=setmpcsignals(lip_y_d,"MeasuredOutputs",1,"UnmeasuredOutputs",[2 3]);
-xm = [0;0;0];
+lip_x_d=setmpcsignals(lip_x_d,"MeasuredOutputs",1);
+lip_y_d=setmpcsignals(lip_y_d,"MeasuredOutputs",1);
 
-
-n1 = size(xm,1);
-q = 1;
+Ap = lip_x_d.A;
+Bp = lip_x_d.B;
+Cp = lip_x_d.C;
+Dp = lip_x_d.D;
+Nc = 50;
 Np = 300;
-Nc = 100;
+Nl = 200;
+rw =0.00005;
+BarR = rw*eye(Nc);
+[Phi_Phi, Phi_F, Phi_R, F, BarRs, Phi,Psi, A_e, B_e,C_e]= mpcgain(Ap, Bp,zeros(3,1), Cp, Nc, Np,Nl);
+
+k= 1;
+xm = [0;0;0];
+old_xm = [0;0;0];
+data = []
+y = Cp*xm;
+x = [xm;y]
+r = zeros(size(sim_time,2)+Nl,1)
+r(size(sim_time,2)/7:size(sim_time,2)*2/7) = 1;
+r(size(sim_time,2)*2/7:size(sim_time,2)*3/7) = -1;
+r(size(sim_time,2)*3/7:size(sim_time,2)*4/7) = 1;
+r(size(sim_time,2)*4/7:size(sim_time,2)*5/7) = -1;
 
 
-Am = lip_x_d.A;
-Bm = lip_x_d.B;
-Cm = lip_x_d.C;
-Cm = Cm(1,:);
-Dm = lip_x_d.D;
-y = Cm*xm;
+r_diff = []
+for i = 2:1:length(r)
+    r_diff = [r_diff,r(i)-r(i-1)];
+end
+r_diff(end+1) = r_diff(end);
 
-xm_old = xm;
-A = [Am zeros(n1,q);Cm*Am eye(q)];
-B = [Bm;Cm*Bm];
-C = [zeros(q,n1) eye(q,q)];
-x = [xm-xm_old;y]
-
-u=zeros(size(ts))
-u(200:end)=1;
-k = 1;
-data=[]
-
-
- F = []
- Phi= []
- for i =1:1:Np
-     F =[F;C*A^i];
-     temp =[]
-     for j = 1:1:Nc
-        if i-j<0
-             temp = [temp,zeros(size(C*B))];
-        else
-             temp = [temp,C*A^(i-j)*B];
-        end
-     end
-     Phi =[Phi;temp];
- end
-rw = 0.01;
-R_bar = rw*eye(Nc);
-r = u;
-R_bar_s = ones(size(r,1),Np*q);
-Phi_Phi = Phi'*Phi;
-Phi_R = Phi'*R_bar_s';
-Phi_F = Phi'*F;
-u=0;
-Kob =1;
-xhat = [0;0;0];
-for t = ts
-    DeltaU = inv(Phi_Phi+rw*eye(Nc,Nc))*(Phi_R*r(k) -Phi_F*x);
+u =0;
+Q = eye(Np,Np);
+for i = 1:1:Np
+    Q(i,i) = 1/log10(1+i);
+end
+for t = sim_time
+    DeltaU  = -inv(Phi'*Q*Phi+BarR)*(Phi'*Q*Psi*r_diff(k+1:k+1+Nl-1)' +Phi'*Q*F*x);
     deltau = DeltaU(1,1);
     u = u+deltau;
-    xm_old = xm;
-    xm = Am*xm+Bm*u;
-    y = Cm*xm;
-    xhat = Am*xhat+Bm*u+Kob*(y(1)-xhat(1))
-    x = [xm-xm_old;y(1)];
-
+    old_xm = xm;
+    xm = Ap*xm+Bp*u;
+    y = Cp*xm;
+    x = [xm-old_xm;y];
     
-     data(1,k) = t;
-     data(2,k) = xm(1);
-     data(3,k) = xm(2);
-     data(4,k) = xm(3);
-     data(5,k) = xhat(1);
-     data(6,k) = xhat(2);
-     data(7,k) = xhat(3);
-     
-     
-     data(8,k) = u;
-     k = k+1;
+    data(k,1) = t;
+    data(k,2) = y(1);
+    data(k,3) = xm(2);
+    data(k,4) = xm(3);
+    data(k,5) = u;
+    data(k,6) = r(k);    
+    k = k+1;
 end
 
-
-figure;
-subplot(4,1,1)
-plot(data(1,:),data(2,:))
-hold on;
-plot(data(1,:),data(5,:),'r:')
-
-subplot(4,1,2)
-plot(data(1,:),data(3,:))
-hold on;
-plot(data(1,:),data(6,:),'r:')
-subplot(4,1,3)
-plot(data(1,:),data(4,:))
-hold on;
-plot(data(1,:),data(7,:),'r:')
-subplot(4,1,4)
-plot(data(1,:),data(8,:))
+plot_data(data);
